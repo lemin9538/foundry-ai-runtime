@@ -1,0 +1,7 @@
+export const DEFAULT_AI_TIMEOUT_MS = 300_000;
+export const MAX_AI_TIMEOUT_MS = 3_600_000;
+export const DEFAULT_AI_MAX_ATTEMPTS = 2;
+
+export const DEFAULT_AI_RETRY_BASE_DELAY_MS = 500;
+export const DEFAULT_AI_RETRY_MAX_DELAY_MS = 30_000;
+export const MAX_AI_MAX_ATTEMPTS = 10;

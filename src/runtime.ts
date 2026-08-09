@@ -1,0 +1,173 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { generateObject as sdkGenerateObject, type LanguageModelUsage } from "ai";
+import { createTimedAbortSignal } from "./abort.js";
+import { DEFAULT_AI_TIMEOUT_MS, MAX_AI_TIMEOUT_MS } from "./constants.js";
+import { AIRuntimeError } from "./errors.js";
+import { classifyError, providerSecrets } from "./error-utils.js";
+import { createProviderModel, validateProviderConfig } from "./provider.js";
+import { resolveRetryOptions, retryDelayMs, waitBeforeRetry } from "./retry.js";
+import type { AIProviderConfig, AIUsage, GenerateObjectRequest, GenerateObjectResult } from "./types.js";
+
+export async function generateObject<T>(
+  request: GenerateObjectRequest<T>,
+): Promise<GenerateObjectResult<T>> {
+  const startedAt = performance.now();
+  const provider = validateProviderConfig(request.provider);
+  validateRequest(request, provider);
+  const timeoutMs = resolveTimeoutMs(request.timeoutMs, provider.kind);
+  const retry = resolveRetryOptions(request.retry, provider.kind);
+  const secrets = providerSecrets(provider, request.prompt, request.system);
+
+  if (request.signal?.aborted) {
+    throw classifyError(request.signal.reason, provider.kind, {
+      attempts: 0,
+      externallyAborted: true,
+      secrets,
+    }).error;
+  }
+
+  let lastError: AIRuntimeError | undefined;
+  for (let attempt = 1; attempt <= retry.maxAttempts; attempt += 1) {
+    const attemptAbort = createTimedAbortSignal(request.signal, timeoutMs);
+    let cliDirectory: string | undefined;
+
+    try {
+      if (provider.kind !== "openai-compatible") {
+        cliDirectory = await mkdtemp(join(tmpdir(), `foundry-ai-runtime-${provider.kind}-`));
+      }
+      const model = await createProviderModel(provider, cliDirectory);
+      const result = await sdkGenerateObject({
+        model,
+        schema: request.schema,
+        prompt: request.prompt,
+        system: request.system,
+        schemaName: request.schemaName,
+        schemaDescription: request.schemaDescription,
+        maxRetries: 0,
+        abortSignal: attemptAbort.signal,
+      });
+      const validated = request.schema.safeParse(result.object);
+      if (!validated.success) {
+        throw new AIRuntimeError("The model output did not match the requested schema.", {
+          code: "INVALID_OUTPUT",
+          provider: provider.kind,
+          retryable: true,
+          attempts: attempt,
+        });
+      }
+
+      return {
+        value: validated.data,
+        provider: provider.kind,
+        model: provider.model,
+        usage: normalizeUsage(result.usage),
+        finishReason: result.finishReason,
+        attempts: attempt,
+        durationMs: Math.round(performance.now() - startedAt),
+      };
+    } catch (source) {
+      const classified = classifyError(source, provider.kind, {
+        attempts: attempt,
+        timedOut: attemptAbort.didTimeout(),
+        externallyAborted: attemptAbort.wasExternallyAborted() || request.signal?.aborted,
+        secrets,
+      });
+      lastError = classified.error;
+      if (!lastError.retryable || attempt >= retry.maxAttempts) throw lastError;
+
+      try {
+        await waitBeforeRetry(retryDelayMs(attempt, retry, classified.retryAfterMs), request.signal);
+      } catch (delayError) {
+        throw classifyError(delayError, provider.kind, {
+          attempts: attempt,
+          externallyAborted: request.signal?.aborted,
+          secrets,
+        }).error;
+      }
+    } finally {
+      attemptAbort.dispose();
+      if (cliDirectory !== undefined) await rm(cliDirectory, { recursive: true, force: true });
+    }
+  }
+
+  throw lastError ?? new AIRuntimeError("The AI provider request failed.", {
+    code: "REQUEST_FAILED",
+    provider: provider.kind,
+    retryable: false,
+  });
+}
+
+function validateRequest<T>(request: GenerateObjectRequest<T>, provider: AIProviderConfig): void {
+  if (typeof request.prompt !== "string" || request.prompt.trim() === "") {
+    throw invalidRequest("prompt must be a non-empty string.", provider);
+  }
+  if (request.system !== undefined && typeof request.system !== "string") {
+    throw invalidRequest("system must be a string when provided.", provider);
+  }
+  if (request.schemaName !== undefined && (typeof request.schemaName !== "string" || request.schemaName.trim() === "")) {
+    throw invalidRequest("schemaName must be a non-empty string when provided.", provider);
+  }
+  if (request.schemaDescription !== undefined && typeof request.schemaDescription !== "string") {
+    throw invalidRequest("schemaDescription must be a string when provided.", provider);
+  }
+  if (
+    request.schema === null ||
+    typeof request.schema !== "object" ||
+    typeof request.schema.safeParse !== "function"
+  ) {
+    throw invalidRequest("schema must be a Zod schema.", provider);
+  }
+}
+
+function resolveTimeoutMs(value: number | undefined, provider: AIProviderConfig["kind"]): number {
+  const timeoutMs = value ?? DEFAULT_AI_TIMEOUT_MS;
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > MAX_AI_TIMEOUT_MS) {
+    throw new AIRuntimeError(`timeoutMs must be between 1 and ${MAX_AI_TIMEOUT_MS}.`, {
+      code: "INVALID_CONFIG",
+      provider,
+      retryable: false,
+    });
+  }
+  return timeoutMs;
+}
+
+function invalidRequest(message: string, provider: AIProviderConfig): AIRuntimeError {
+  return new AIRuntimeError(message, {
+    code: "INVALID_CONFIG",
+    provider: provider.kind,
+    retryable: false,
+  });
+}
+
+function normalizeUsage(usage: LanguageModelUsage): AIUsage | undefined {
+  const inputTokens = usage.inputTokens;
+  const outputTokens = usage.outputTokens;
+  const totalTokens = usage.totalTokens;
+  const cacheReadTokens = usage.inputTokenDetails?.cacheReadTokens;
+  const cacheWriteTokens = usage.inputTokenDetails?.cacheWriteTokens;
+  const reasoningTokens = usage.outputTokenDetails?.reasoningTokens;
+
+  if (
+    inputTokens === undefined &&
+    outputTokens === undefined &&
+    totalTokens === undefined &&
+    cacheReadTokens === undefined &&
+    cacheWriteTokens === undefined &&
+    reasoningTokens === undefined
+  ) {
+    return undefined;
+  }
+
+  const normalizedInput = inputTokens ?? 0;
+  const normalizedOutput = outputTokens ?? 0;
+  return {
+    inputTokens: normalizedInput,
+    outputTokens: normalizedOutput,
+    totalTokens: totalTokens ?? normalizedInput + normalizedOutput,
+    ...(cacheReadTokens === undefined ? {} : { cacheReadTokens }),
+    ...(cacheWriteTokens === undefined ? {} : { cacheWriteTokens }),
+    ...(reasoningTokens === undefined ? {} : { reasoningTokens }),
+  };
+}
