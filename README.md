@@ -16,19 +16,40 @@
 
 ## Install
 
-HTTP 调用只需要主包和 peer dependency `zod`：
+包目前直接从 GitHub 安装。只使用 OpenAI-compatible HTTP 时，安装主包和 peer dependency `zod`：
 
 ```bash
 npm install git+ssh://git@github.com/lemin9538/foundry-ai-runtime.git#main zod
 ```
 
-正式接入时建议把 `#main` 换成发布 tag 或固定 commit SHA，保证各项目安装结果可复现。
-
-CLI adapter 是 optional peer dependency。只安装实际需要的一种或两种：
+如果当前网络无法访问 GitHub SSH 的 22 端口，改用官方 SSH 443 入口：
 
 ```bash
-npm install --omit=optional ai-sdk-provider-codex-cli
-npm install --omit=optional ai-sdk-provider-claude-code
+npm install git+ssh://git@ssh.github.com:443/lemin9538/foundry-ai-runtime.git#main zod
+```
+
+使用 Codex CLI 时，同时安装 Codex adapter：
+
+```bash
+npm install --omit=optional git+ssh://git@github.com/lemin9538/foundry-ai-runtime.git#main zod ai-sdk-provider-codex-cli
+```
+
+使用 Claude Code CLI 时，同时安装 Claude adapter：
+
+```bash
+npm install --omit=optional git+ssh://git@github.com/lemin9538/foundry-ai-runtime.git#main zod ai-sdk-provider-claude-code
+```
+
+两个 CLI 都需要时，可以一次安装：
+
+```bash
+npm install --omit=optional git+ssh://git@github.com/lemin9538/foundry-ai-runtime.git#main zod ai-sdk-provider-codex-cli ai-sdk-provider-claude-code
+```
+
+正式项目不要长期跟随 `#main`，应替换为发布 tag 或固定 commit SHA。例如固定到首个可用版本：
+
+```bash
+npm install git+ssh://git@github.com/lemin9538/foundry-ai-runtime.git#dafc8ac83557b16f09658ab62ed2848181f68e93 zod
 ```
 
 `--omit=optional` 避免 adapter 再安装其可选的内置 CLI 二进制。运行时会明确调用系统 PATH 中的 `codex` 或 `claude`；也可以通过 `executable` 指定路径。CLI 本身需要提前安装并登录：
