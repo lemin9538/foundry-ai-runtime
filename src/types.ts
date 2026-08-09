@@ -15,7 +15,7 @@ export interface OpenAICompatibleProviderConfig {
 
 interface CLIProviderConfig {
   executable?: string;
-  model: string;
+  model?: string;
   env?: Readonly<Record<string, string | undefined>>;
 }
 
@@ -78,7 +78,7 @@ export interface InspectProviderOptions {
 export interface AIProviderStatus {
   provider: AIProviderKind;
   transport: AITransport;
-  model: string;
+  model?: string;
   configured: boolean;
   available?: boolean;
   installed?: boolean;

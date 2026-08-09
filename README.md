@@ -129,7 +129,7 @@ import { z } from "zod";
 const result = await generateObject({
   provider: {
     kind: "codex-cli",
-    model: "gpt-5.4-mini",
+    // model: "gpt-5.6-sol",
     // executable: "/usr/local/bin/codex",
   },
   schema: z.object({ answer: z.string(), confidence: z.number() }),
@@ -137,6 +137,8 @@ const result = await generateObject({
   prompt: "Summarize why schema validation matters in one sentence.",
 });
 ```
+
+`model` 可省略。此时 runtime 通过 Codex CLI 的模型发现接口读取 `config.toml` 对应的默认模型；显式传入时则覆盖 CLI 默认值。
 
 每次调用都在新建的空临时目录中运行，完成后删除该目录。Codex adapter 固定使用：
 
@@ -156,13 +158,15 @@ const result = await generateObject({
 const result = await generateObject({
   provider: {
     kind: "claude-cli",
-    model: "sonnet",
+    // model: "sonnet",
     // executable: "/usr/local/bin/claude",
   },
   schema: StoryboardSchema,
   prompt: "Create a compact two-scene storyboard.",
 });
 ```
+
+Claude 的 `model` 可省略，默认使用可随 Claude Code 升级的 `sonnet` 别名。
 
 Claude Code 同样在一次性的空临时目录中运行，并固定：
 
@@ -259,7 +263,7 @@ import { inspectProvider } from "foundry-ai-runtime";
 
 const cliStatus = await inspectProvider({
   kind: "codex-cli",
-  model: "gpt-5.4-mini",
+  // model: "gpt-5.6-sol",
 });
 
 const httpStatus = await inspectProvider({

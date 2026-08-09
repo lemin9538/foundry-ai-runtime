@@ -27,8 +27,8 @@ export function validateProviderConfig(config: AIProviderConfig): AIProviderConf
     );
   }
 
-  const model = requiredString(config.model, "model", kind);
   if (kind === "openai-compatible") {
+    const model = requiredString(config.model, "model", kind);
     const baseURL = validateBaseURL(config.baseURL, kind);
     const apiKey = optionalString(config.apiKey, "apiKey", kind);
     const providerName = optionalString(config.providerName, "providerName", kind);
@@ -50,10 +50,11 @@ export function validateProviderConfig(config: AIProviderConfig): AIProviderConf
   }
 
   const executable = optionalString(config.executable, "executable", kind);
+  const model = optionalString(config.model, "model", kind);
   const env = config.env === undefined ? undefined : validateEnvironment(config.env, kind);
   return {
     kind,
-    model,
+    ...(model !== undefined ? { model } : {}),
     ...(executable !== undefined ? { executable } : {}),
     ...(env !== undefined ? { env } : {}),
   };
@@ -101,8 +102,9 @@ async function createCodexModel(
   config: CodexCLIProviderConfig,
   workingDirectory: string,
 ): Promise<LanguageModel> {
-  const { codexExec } = await loadCodexAdapter();
-  return codexExec(config.model, {
+  const { codexExec, listModels } = await loadCodexAdapter();
+  const model = config.model ?? await resolveCodexDefaultModel(config, workingDirectory, listModels);
+  return codexExec(model, {
     codexPath: config.executable ?? "codex",
     cwd: workingDirectory,
     approvalMode: "never",
@@ -124,7 +126,7 @@ async function createClaudeModel(
   workingDirectory: string,
 ): Promise<LanguageModel> {
   const { claudeCode } = await loadClaudeAdapter();
-  return claudeCode(config.model, {
+  return claudeCode(config.model ?? "sonnet", {
     pathToClaudeCodeExecutable: config.executable ?? "claude",
     cwd: workingDirectory,
     maxTurns: 1,
@@ -135,6 +137,25 @@ async function createClaudeModel(
     logger: false,
     env: config.env === undefined ? undefined : { ...config.env },
   });
+}
+
+async function resolveCodexDefaultModel(
+  config: CodexCLIProviderConfig,
+  workingDirectory: string,
+  listModels: typeof import("ai-sdk-provider-codex-cli")["listModels"],
+): Promise<string> {
+  const environment = config.env === undefined
+    ? undefined
+    : Object.fromEntries(Object.entries(config.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
+  const result = await listModels({
+    codexPath: config.executable ?? "codex",
+    cwd: workingDirectory,
+    ...(environment === undefined ? {} : { env: environment }),
+  });
+  const defaultModel = result.defaultModel ?? result.models.find((model) => model.isDefault === true);
+  const model = defaultModel?.model?.trim() || defaultModel?.id.trim();
+  if (model) return model;
+  throw invalidConfig("Codex CLI did not report a default model; configure model explicitly.", config.kind);
 }
 
 function downgradeSchemaToJSONMode(body: Record<string, unknown>): Record<string, unknown> {

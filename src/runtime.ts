@@ -61,7 +61,7 @@ export async function generateObject<T>(
       return {
         value: validated.data,
         provider: provider.kind,
-        model: provider.model,
+        model: typeof model === "string" ? model : model.modelId,
         usage: normalizeUsage(result.usage),
         finishReason: result.finishReason,
         attempts: attempt,

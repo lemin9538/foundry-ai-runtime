@@ -34,10 +34,11 @@ export async function inspectProvider(
     provider = validateProviderConfig(providerConfig);
   } catch (error) {
     const kind = unsafeProviderKind(providerConfig);
+    const model = unsafeModel(providerConfig);
     return {
       provider: kind,
       transport: kind === "openai-compatible" ? "http" : "cli",
-      model: unsafeModel(providerConfig),
+      ...(model === undefined ? {} : { model }),
       configured: false,
       available: false,
       message: sanitizeMessage(error instanceof Error ? error.message : String(error), undefined),
@@ -125,7 +126,7 @@ async function inspectCLIProvider(
   const baseStatus: AIProviderStatus = {
     provider: provider.kind,
     transport: "cli",
-    model: provider.model,
+    ...(provider.model === undefined ? {} : { model: provider.model }),
     configured: true,
     executable,
   };
@@ -335,8 +336,8 @@ function unsafeProviderKind(value: unknown): AIProviderKind {
   return "openai-compatible";
 }
 
-function unsafeModel(value: unknown): string {
-  return isRecord(value) && typeof value.model === "string" ? value.model : "";
+function unsafeModel(value: unknown): string | undefined {
+  return isRecord(value) && typeof value.model === "string" ? value.model : undefined;
 }
 
 function errorCode(error: unknown): string | undefined {

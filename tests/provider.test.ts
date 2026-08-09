@@ -3,14 +3,19 @@ import { createProviderModel, validateProviderConfig } from "../src/provider.js"
 
 const adapters = vi.hoisted(() => ({
   codexExec: vi.fn(() => ({ provider: "mock-codex" })),
+  listModels: vi.fn(async () => ({
+    models: [{ id: "gpt-configured", model: "gpt-configured", isDefault: true }],
+    defaultModel: { id: "gpt-configured", model: "gpt-configured", isDefault: true },
+  })),
   claudeCode: vi.fn(() => ({ provider: "mock-claude" })),
 }));
 
-vi.mock("ai-sdk-provider-codex-cli", () => ({ codexExec: adapters.codexExec }));
+vi.mock("ai-sdk-provider-codex-cli", () => ({ codexExec: adapters.codexExec, listModels: adapters.listModels }));
 vi.mock("ai-sdk-provider-claude-code", () => ({ claudeCode: adapters.claudeCode }));
 
 beforeEach(() => {
   adapters.codexExec.mockClear();
+  adapters.listModels.mockClear();
   adapters.claudeCode.mockClear();
 });
 
@@ -39,6 +44,21 @@ describe("CLI provider construction", () => {
     });
   });
 
+  it("uses the default model reported by Codex when model is omitted", async () => {
+    await createProviderModel({
+      kind: "codex-cli",
+      executable: "/opt/bin/codex",
+    }, "/tmp/foundry-isolated-codex");
+
+    expect(adapters.listModels).toHaveBeenCalledWith({
+      codexPath: "/opt/bin/codex",
+      cwd: "/tmp/foundry-isolated-codex",
+    });
+    expect(adapters.codexExec).toHaveBeenCalledWith("gpt-configured", expect.objectContaining({
+      codexPath: "/opt/bin/codex",
+    }));
+  });
+
   it("disables Claude tools, settings sources, prompts, and session persistence", async () => {
     await createProviderModel({
       kind: "claude-cli",
@@ -57,6 +77,14 @@ describe("CLI provider construction", () => {
       logger: false,
       env: undefined,
     });
+  });
+
+  it("uses the stable Claude sonnet alias when model is omitted", async () => {
+    await createProviderModel({ kind: "claude-cli" }, "/tmp/foundry-isolated-claude");
+
+    expect(adapters.claudeCode).toHaveBeenCalledWith("sonnet", expect.objectContaining({
+      cwd: "/tmp/foundry-isolated-claude",
+    }));
   });
 
   it("validates runtime configuration and strips trailing base URL slashes", () => {
