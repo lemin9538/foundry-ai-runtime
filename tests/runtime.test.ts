@@ -117,7 +117,7 @@ describe("Codex schema compatibility", () => {
               speaker_ref: { type: "string" },
               duration_hint_ms: { type: "number" },
             },
-            required: ["kind"],
+            required: ["duration_hint_ms", "kind", "speaker_ref", "text"],
             additionalProperties: false,
           },
         },

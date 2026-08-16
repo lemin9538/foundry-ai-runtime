@@ -212,10 +212,6 @@ function mergeObjectSchemaAlternatives(
   alternatives: readonly Record<string, unknown>[],
 ): JsonValue {
   const properties = new Map<string, unknown[]>();
-  const requiredSets = alternatives.map((item) =>
-    new Set(Array.isArray(item["required"]) ? item["required"].filter((value) => typeof value === "string") : []),
-  );
-
   for (const alternative of alternatives) {
     const alternativeProperties = alternative["properties"];
     if (!isUnknownRecord(alternativeProperties)) continue;
@@ -231,13 +227,10 @@ function mergeObjectSchemaAlternatives(
     mergedProperties[propertyName] = mergePropertySchemas(schemas);
   }
 
-  const required = [...properties.keys()]
-    .filter((propertyName) => requiredSets.every((set) => set.has(propertyName)))
-    .sort();
   const output: Record<string, JsonValue> = {
     type: "object",
     properties: mergedProperties,
-    required,
+    required: [...properties.keys()].sort(),
     additionalProperties: false,
   };
 
