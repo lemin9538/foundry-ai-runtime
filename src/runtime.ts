@@ -44,9 +44,7 @@ export async function generateObject<T>(
         cliDirectory = await mkdtemp(join(tmpdir(), `foundry-ai-runtime-${provider.kind}-`));
       }
       const model = await createProviderModel(provider, cliDirectory);
-      const schema = provider.kind === "codex-cli"
-        ? await codexCompatibleSchema(request.schema)
-        : request.schema;
+      const schema = provider.kind === "codex-cli" ? await codexCompatibleSchema(request.schema) : request.schema;
       const result = await sdkGenerateObject({
         model,
         schema,
@@ -133,6 +131,7 @@ export const CLI_STRUCTURED_GENERATION_GUARD = [
   "You are being used as a structured data generation model, not as an autonomous coding agent.",
   "Do not inspect files, run shell commands, edit files, use tools, browse, or read project instructions.",
   "Use only the system and user prompt content supplied in this request.",
+  "When a required JSON field is semantically optional or not applicable, set it to null instead of inventing placeholder values.",
   "Return only data that satisfies the requested schema.",
 ].join("\n");
 
@@ -147,10 +146,11 @@ export function systemPromptForProvider(
 
 async function codexCompatibleSchema<T>(schema: GenerateObjectRequest<T>["schema"]): Promise<FlexibleSchema<T>> {
   const original = asSchema(schema);
-  const compatible = codexCompatibleJsonSchema(await original.jsonSchema);
+  const originalJsonSchema = await original.jsonSchema;
+  const compatible = codexCompatibleJsonSchema(originalJsonSchema);
   return jsonSchema<T>(compatible, {
     validate: (value) => {
-      const parsed = schema.safeParse(value);
+      const parsed = schema.safeParse(normalizeCodexOutput(value, originalJsonSchema));
       return parsed.success
         ? { success: true, value: parsed.data }
         : { success: false, error: parsed.error };
@@ -170,10 +170,15 @@ export function codexCompatibleJsonSchema(input: unknown): JsonValue {
   for (const [key, value] of Object.entries(record)) {
     if (CODEX_UNSUPPORTED_SCHEMA_KEYS.has(key)) continue;
     if (key === "properties" && isUnknownRecord(value)) {
+      const required = new Set(
+        Array.isArray(record.required) ? record.required.filter((item) => typeof item === "string") : [],
+      );
       output.properties = Object.fromEntries(
         Object.entries(value).map(([propertyName, propertySchema]) => [
           propertyName,
-          codexCompatibleJsonSchema(propertySchema),
+          required.has(propertyName)
+            ? codexCompatibleJsonSchema(propertySchema)
+            : nullableCodexSchema(codexCompatibleJsonSchema(propertySchema)),
         ]),
       );
       continue;
@@ -186,6 +191,37 @@ export function codexCompatibleJsonSchema(input: unknown): JsonValue {
     if (output.additionalProperties === undefined) output.additionalProperties = false;
   }
 
+  return output;
+}
+
+function normalizeCodexOutput(value: unknown, schema: unknown): unknown {
+  if (!isUnknownRecord(schema)) return value;
+
+  const alternatives = objectSchemaAlternatives(schema["oneOf"] ?? schema["anyOf"]);
+  if (alternatives !== undefined) {
+    const selected = selectMatchingObjectAlternative(value, alternatives);
+    return selected === undefined ? value : normalizeCodexOutput(value, selected);
+  }
+
+  const schemaType = schema["type"];
+  if (schemaType === "array" && Array.isArray(value)) {
+    const itemSchema = schema["items"];
+    return value.map((item) => normalizeCodexOutput(item, itemSchema));
+  }
+
+  if (schemaType !== "object" || !isUnknownRecord(schema["properties"]) || !isUnknownRecord(value)) {
+    return value;
+  }
+
+  const required = new Set(
+    Array.isArray(schema["required"]) ? schema["required"].filter((item) => typeof item === "string") : [],
+  );
+  const output: Record<string, unknown> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    if (raw === null && !required.has(key)) continue;
+    const propertySchema = schema["properties"][key];
+    output[key] = normalizeCodexOutput(raw, propertySchema);
+  }
   return output;
 }
 
@@ -212,6 +248,9 @@ function mergeObjectSchemaAlternatives(
   alternatives: readonly Record<string, unknown>[],
 ): JsonValue {
   const properties = new Map<string, unknown[]>();
+  const requiredSets = alternatives.map((item) =>
+    new Set(Array.isArray(item["required"]) ? item["required"].filter((value) => typeof value === "string") : []),
+  );
   for (const alternative of alternatives) {
     const alternativeProperties = alternative["properties"];
     if (!isUnknownRecord(alternativeProperties)) continue;
@@ -224,7 +263,10 @@ function mergeObjectSchemaAlternatives(
 
   const mergedProperties: Record<string, JsonValue> = {};
   for (const [propertyName, schemas] of properties) {
-    mergedProperties[propertyName] = mergePropertySchemas(schemas);
+    const requiredByAllAlternatives =
+      schemas.length === alternatives.length && requiredSets.every((set) => set.has(propertyName));
+    const merged = mergePropertySchemas(schemas);
+    mergedProperties[propertyName] = requiredByAllAlternatives ? merged : nullableCodexSchema(merged);
   }
 
   const output: Record<string, JsonValue> = {
@@ -272,6 +314,39 @@ function mergePropertySchemas(schemas: readonly unknown[]): JsonValue {
   }
 
   return {};
+}
+
+function nullableCodexSchema(schema: JsonValue): JsonValue {
+  if (!isJsonObject(schema)) return schema;
+  const output: Record<string, JsonValue> = { ...schema };
+  const type = output.type;
+  if (typeof type === "string") {
+    output.type = type === "null" ? type : [type, "null"];
+  } else if (Array.isArray(type)) {
+    output.type = type.includes("null") ? type : [...type, "null"];
+  }
+  if (Array.isArray(output.enum) && !output.enum.includes(null)) {
+    output.enum = [...output.enum, null];
+  }
+  return output;
+}
+
+function selectMatchingObjectAlternative(
+  value: unknown,
+  alternatives: readonly Record<string, unknown>[],
+): Record<string, unknown> | undefined {
+  if (!isUnknownRecord(value)) return alternatives[0];
+  for (const alternative of alternatives) {
+    const properties = alternative["properties"];
+    if (!isUnknownRecord(properties)) continue;
+    const discriminators = Object.entries(properties).filter((entry): entry is [string, Record<string, unknown>] =>
+      isUnknownRecord(entry[1]) && entry[1]["const"] !== undefined
+    );
+    if (discriminators.length > 0 && discriminators.every(([key, schema]) => value[key] === schema["const"])) {
+      return alternative;
+    }
+  }
+  return alternatives[0];
 }
 
 function uniqueJsonValues(values: readonly JsonValue[]): JsonValue[] {

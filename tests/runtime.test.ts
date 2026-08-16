@@ -46,14 +46,14 @@ describe("Codex schema compatibility", () => {
           type: "object",
           properties: {
             background: { type: "string" },
-            title: { type: "string" },
+            title: { type: ["string", "null"] },
             items: {
-              type: "array",
+              type: ["array", "null"],
               items: {
                 type: "object",
                 properties: {
                   statement: { type: "string" },
-                  refs: { type: "array", items: { type: "string" } },
+                  refs: { type: ["array", "null"], items: { type: "string" } },
                 },
                 required: ["refs", "statement"],
                 additionalProperties: false,
@@ -113,9 +113,9 @@ describe("Codex schema compatibility", () => {
             type: "object",
             properties: {
               kind: { type: "string", enum: ["narration", "pause"] },
-              text: { type: "string" },
-              speaker_ref: { type: "string" },
-              duration_hint_ms: { type: "number" },
+              text: { type: ["string", "null"] },
+              speaker_ref: { type: ["string", "null"] },
+              duration_hint_ms: { type: ["number", "null"] },
             },
             required: ["duration_hint_ms", "kind", "speaker_ref", "text"],
             additionalProperties: false,
