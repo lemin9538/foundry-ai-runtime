@@ -274,10 +274,9 @@ function mergeObjectSchemaAlternatives(
 
   const mergedProperties: Record<string, JsonValue> = {};
   for (const [propertyName, schemas] of properties) {
-    const requiredByAllAlternatives =
-      schemas.length === alternatives.length && requiredSets.every((set) => set.has(propertyName));
+    const requiredByAnyAlternative = requiredSets.some((set) => set.has(propertyName));
     const merged = mergePropertySchemas(schemas);
-    mergedProperties[propertyName] = requiredByAllAlternatives ? merged : nullableCodexSchema(merged);
+    mergedProperties[propertyName] = requiredByAnyAlternative ? merged : nullableCodexSchema(merged);
   }
 
   const output: Record<string, JsonValue> = {

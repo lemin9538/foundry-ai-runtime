@@ -114,7 +114,7 @@ describe("Codex schema compatibility", () => {
             type: "object",
             properties: {
               kind: { type: "string", enum: ["narration", "pause"] },
-              text: { type: ["string", "null"] },
+              text: { type: "string" },
               speaker_ref: { type: ["string", "null"] },
               duration_hint_ms: { type: ["number", "null"] },
             },
