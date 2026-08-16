@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { codexCompatibleJsonSchema } from "../src/runtime.js";
+import {
+  CLI_STRUCTURED_GENERATION_GUARD,
+  codexCompatibleJsonSchema,
+  systemPromptForProvider,
+} from "../src/runtime.js";
 
 describe("Codex schema compatibility", () => {
   it("removes unsupported keys and requires every object property recursively", () => {
@@ -61,5 +65,19 @@ describe("Codex schema compatibility", () => {
       required: ["notes"],
       additionalProperties: false,
     });
+  });
+});
+
+describe("CLI structured generation guard", () => {
+  it("leaves OpenAI-compatible system prompts unchanged", () => {
+    expect(systemPromptForProvider("openai-compatible", "Follow the schema.")).toBe("Follow the schema.");
+    expect(systemPromptForProvider("openai-compatible", undefined)).toBeUndefined();
+  });
+
+  it("adds a domain-neutral guard for CLI-backed providers", () => {
+    expect(systemPromptForProvider("codex-cli", "Follow the schema.")).toBe(
+      `${CLI_STRUCTURED_GENERATION_GUARD}\n\nFollow the schema.`,
+    );
+    expect(systemPromptForProvider("claude-cli", undefined)).toBe(CLI_STRUCTURED_GENERATION_GUARD);
   });
 });

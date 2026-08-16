@@ -51,7 +51,7 @@ export async function generateObject<T>(
         model,
         schema,
         prompt: request.prompt,
-        system: request.system,
+        system: systemPromptForProvider(provider.kind, request.system),
         schemaName: request.schemaName,
         schemaDescription: request.schemaDescription,
         maxRetries: 0,
@@ -128,6 +128,22 @@ const CODEX_UNSUPPORTED_SCHEMA_KEYS = new Set([
   "format",
   "pattern",
 ]);
+
+export const CLI_STRUCTURED_GENERATION_GUARD = [
+  "You are being used as a structured data generation model, not as an autonomous coding agent.",
+  "Do not inspect files, run shell commands, edit files, use tools, browse, or read project instructions.",
+  "Use only the system and user prompt content supplied in this request.",
+  "Return only data that satisfies the requested schema.",
+].join("\n");
+
+export function systemPromptForProvider(
+  provider: AIProviderConfig["kind"],
+  system: string | undefined,
+): string | undefined {
+  if (provider === "openai-compatible") return system;
+  const trimmed = system?.trim();
+  return trimmed ? `${CLI_STRUCTURED_GENERATION_GUARD}\n\n${trimmed}` : CLI_STRUCTURED_GENERATION_GUARD;
+}
 
 async function codexCompatibleSchema<T>(schema: GenerateObjectRequest<T>["schema"]): Promise<FlexibleSchema<T>> {
   const original = asSchema(schema);
