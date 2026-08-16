@@ -49,7 +49,7 @@ export async function generateObject<T>(
         model,
         schema,
         prompt: request.prompt,
-        system: systemPromptForProvider(provider.kind, request.system),
+        system: systemPromptForProvider(provider, request.system),
         schemaName: request.schemaName,
         schemaDescription: request.schemaDescription,
         maxRetries: 0,
@@ -135,11 +135,22 @@ export const CLI_STRUCTURED_GENERATION_GUARD = [
   "Return only data that satisfies the requested schema.",
 ].join("\n");
 
+export const HTTP_JSON_MODE_GUARD =
+  "Return only a JSON object that satisfies the requested schema.";
+
 export function systemPromptForProvider(
-  provider: AIProviderConfig["kind"],
+  provider: AIProviderConfig | AIProviderConfig["kind"],
   system: string | undefined,
 ): string | undefined {
-  if (provider === "openai-compatible") return system;
+  const kind = typeof provider === "string" ? provider : provider.kind;
+  if (kind === "openai-compatible") {
+    const usesJsonMode =
+      typeof provider === "string" ||
+      (provider.kind === "openai-compatible" && provider.structuredOutputs !== true);
+    if (!usesJsonMode) return system;
+    const trimmed = system?.trim();
+    return trimmed ? `${HTTP_JSON_MODE_GUARD}\n\n${trimmed}` : HTTP_JSON_MODE_GUARD;
+  }
   const trimmed = system?.trim();
   return trimmed ? `${CLI_STRUCTURED_GENERATION_GUARD}\n\n${trimmed}` : CLI_STRUCTURED_GENERATION_GUARD;
 }
