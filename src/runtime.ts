@@ -1,7 +1,13 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { generateObject as sdkGenerateObject, type LanguageModelUsage } from "ai";
+import {
+  asSchema,
+  generateObject as sdkGenerateObject,
+  jsonSchema,
+  type FlexibleSchema,
+  type LanguageModelUsage,
+} from "ai";
 import { createTimedAbortSignal } from "./abort.js";
 import { DEFAULT_AI_TIMEOUT_MS, MAX_AI_TIMEOUT_MS } from "./constants.js";
 import { AIRuntimeError } from "./errors.js";
@@ -38,9 +44,12 @@ export async function generateObject<T>(
         cliDirectory = await mkdtemp(join(tmpdir(), `foundry-ai-runtime-${provider.kind}-`));
       }
       const model = await createProviderModel(provider, cliDirectory);
+      const schema = provider.kind === "codex-cli"
+        ? await codexCompatibleSchema(request.schema)
+        : request.schema;
       const result = await sdkGenerateObject({
         model,
-        schema: request.schema,
+        schema,
         prompt: request.prompt,
         system: request.system,
         schemaName: request.schemaName,
@@ -97,6 +106,63 @@ export async function generateObject<T>(
     provider: provider.kind,
     retryable: false,
   });
+}
+
+type JsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonValue[]
+  | { [key: string]: JsonValue };
+
+const CODEX_UNSUPPORTED_SCHEMA_KEYS = new Set([
+  "$schema",
+  "$id",
+  "$ref",
+  "$defs",
+  "definitions",
+  "title",
+  "examples",
+  "default",
+  "format",
+  "pattern",
+]);
+
+async function codexCompatibleSchema<T>(schema: GenerateObjectRequest<T>["schema"]): Promise<FlexibleSchema<T>> {
+  const original = asSchema(schema);
+  const compatible = codexCompatibleJsonSchema(await original.jsonSchema);
+  return jsonSchema<T>(compatible, {
+    validate: (value) => {
+      const parsed = schema.safeParse(value);
+      return parsed.success
+        ? { success: true, value: parsed.data }
+        : { success: false, error: parsed.error };
+    },
+  });
+}
+
+export function codexCompatibleJsonSchema(input: unknown): JsonValue {
+  if (Array.isArray(input)) return input.map((item) => codexCompatibleJsonSchema(item));
+  if (input === null || typeof input !== "object") return input as JsonValue;
+
+  const record = input as Record<string, unknown>;
+  const output: Record<string, JsonValue> = {};
+  for (const [key, value] of Object.entries(record)) {
+    if (CODEX_UNSUPPORTED_SCHEMA_KEYS.has(key)) continue;
+    output[key] = codexCompatibleJsonSchema(value);
+  }
+
+  if (isJsonObject(output.properties)) {
+    output.required = Object.keys(output.properties).sort();
+    if (output.additionalProperties === undefined) output.additionalProperties = false;
+  }
+
+  return output;
+}
+
+function isJsonObject(value: JsonValue | undefined): value is Record<string, JsonValue> {
+  return value !== undefined && value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function validateRequest<T>(request: GenerateObjectRequest<T>, provider: AIProviderConfig): void {
