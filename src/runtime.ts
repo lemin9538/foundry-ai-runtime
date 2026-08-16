@@ -163,6 +163,9 @@ export function codexCompatibleJsonSchema(input: unknown): JsonValue {
   if (input === null || typeof input !== "object") return input as JsonValue;
 
   const record = input as Record<string, unknown>;
+  const alternatives = objectSchemaAlternatives(record["oneOf"] ?? record["anyOf"]);
+  if (alternatives !== undefined) return mergeObjectSchemaAlternatives(record, alternatives);
+
   const output: Record<string, JsonValue> = {};
   for (const [key, value] of Object.entries(record)) {
     if (CODEX_UNSUPPORTED_SCHEMA_KEYS.has(key)) continue;
@@ -192,6 +195,102 @@ function isJsonObject(value: JsonValue | undefined): value is Record<string, Jso
 
 function isUnknownRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function objectSchemaAlternatives(value: unknown): Record<string, unknown>[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const alternatives = value.filter(isUnknownRecord);
+  if (alternatives.length !== value.length) return undefined;
+  if (!alternatives.every((item) => item["type"] === "object" && isUnknownRecord(item["properties"]))) {
+    return undefined;
+  }
+  return alternatives;
+}
+
+function mergeObjectSchemaAlternatives(
+  record: Record<string, unknown>,
+  alternatives: readonly Record<string, unknown>[],
+): JsonValue {
+  const properties = new Map<string, unknown[]>();
+  const requiredSets = alternatives.map((item) =>
+    new Set(Array.isArray(item["required"]) ? item["required"].filter((value) => typeof value === "string") : []),
+  );
+
+  for (const alternative of alternatives) {
+    const alternativeProperties = alternative["properties"];
+    if (!isUnknownRecord(alternativeProperties)) continue;
+    for (const [propertyName, propertySchema] of Object.entries(alternativeProperties)) {
+      const schemas = properties.get(propertyName) ?? [];
+      schemas.push(propertySchema);
+      properties.set(propertyName, schemas);
+    }
+  }
+
+  const mergedProperties: Record<string, JsonValue> = {};
+  for (const [propertyName, schemas] of properties) {
+    mergedProperties[propertyName] = mergePropertySchemas(schemas);
+  }
+
+  const required = [...properties.keys()]
+    .filter((propertyName) => requiredSets.every((set) => set.has(propertyName)))
+    .sort();
+  const output: Record<string, JsonValue> = {
+    type: "object",
+    properties: mergedProperties,
+    required,
+    additionalProperties: false,
+  };
+
+  for (const [key, value] of Object.entries(record)) {
+    if (
+      key === "oneOf" ||
+      key === "anyOf" ||
+      key === "properties" ||
+      key === "required" ||
+      key === "additionalProperties" ||
+      CODEX_UNSUPPORTED_SCHEMA_KEYS.has(key)
+    ) {
+      continue;
+    }
+    output[key] = codexCompatibleJsonSchema(value);
+  }
+
+  return output;
+}
+
+function mergePropertySchemas(schemas: readonly unknown[]): JsonValue {
+  const unique = uniqueJsonValues(schemas.map((schema) => codexCompatibleJsonSchema(schema)));
+  if (unique.length === 1) return unique[0] as JsonValue;
+
+  const constValues = unique
+    .map((schema) => (isJsonObject(schema) ? schema.const : undefined))
+    .filter((value): value is JsonValue => value !== undefined);
+  if (constValues.length === unique.length && constValues.every((value) => typeof value === "string")) {
+    return { type: "string", enum: uniqueJsonValues(constValues).sort() };
+  }
+
+  const stringEnums = unique
+    .map((schema) => (isJsonObject(schema) && schema.type === "string" && Array.isArray(schema.enum) ? schema.enum : undefined));
+  if (stringEnums.every((value) => value !== undefined)) {
+    return {
+      type: "string",
+      enum: uniqueJsonValues(stringEnums.flat().filter((value): value is JsonValue => typeof value === "string")).sort(),
+    };
+  }
+
+  return {};
+}
+
+function uniqueJsonValues(values: readonly JsonValue[]): JsonValue[] {
+  const seen = new Set<string>();
+  const unique: JsonValue[] = [];
+  for (const value of values) {
+    const key = JSON.stringify(value);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(value);
+  }
+  return unique;
 }
 
 function validateRequest<T>(request: GenerateObjectRequest<T>, provider: AIProviderConfig): void {

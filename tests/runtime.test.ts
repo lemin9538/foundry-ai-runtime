@@ -68,6 +68,64 @@ describe("Codex schema compatibility", () => {
       additionalProperties: false,
     });
   });
+
+  it("downgrades object oneOf alternatives without deleting discriminator fields", () => {
+    const converted = codexCompatibleJsonSchema({
+      type: "object",
+      properties: {
+        units: {
+          type: "array",
+          items: {
+            oneOf: [
+              {
+                type: "object",
+                properties: {
+                  kind: { type: "string", const: "narration" },
+                  text: { type: "string" },
+                  speaker_ref: { type: "string" },
+                },
+                required: ["kind", "text"],
+                additionalProperties: false,
+              },
+              {
+                type: "object",
+                properties: {
+                  kind: { type: "string", const: "pause" },
+                  duration_hint_ms: { type: "number" },
+                },
+                required: ["kind"],
+                additionalProperties: false,
+              },
+            ],
+          },
+        },
+      },
+      required: ["units"],
+      additionalProperties: false,
+    });
+
+    expect(converted).toEqual({
+      type: "object",
+      properties: {
+        units: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              kind: { type: "string", enum: ["narration", "pause"] },
+              text: { type: "string" },
+              speaker_ref: { type: "string" },
+              duration_hint_ms: { type: "number" },
+            },
+            required: ["kind"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["units"],
+      additionalProperties: false,
+    });
+  });
 });
 
 describe("CLI structured generation guard", () => {
