@@ -166,6 +166,15 @@ export function codexCompatibleJsonSchema(input: unknown): JsonValue {
   const output: Record<string, JsonValue> = {};
   for (const [key, value] of Object.entries(record)) {
     if (CODEX_UNSUPPORTED_SCHEMA_KEYS.has(key)) continue;
+    if (key === "properties" && isUnknownRecord(value)) {
+      output.properties = Object.fromEntries(
+        Object.entries(value).map(([propertyName, propertySchema]) => [
+          propertyName,
+          codexCompatibleJsonSchema(propertySchema),
+        ]),
+      );
+      continue;
+    }
     output[key] = codexCompatibleJsonSchema(value);
   }
 
@@ -179,6 +188,10 @@ export function codexCompatibleJsonSchema(input: unknown): JsonValue {
 
 function isJsonObject(value: JsonValue | undefined): value is Record<string, JsonValue> {
   return value !== undefined && value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function validateRequest<T>(request: GenerateObjectRequest<T>, provider: AIProviderConfig): void {

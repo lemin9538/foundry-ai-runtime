@@ -16,6 +16,7 @@ describe("Codex schema compatibility", () => {
           type: "object",
           properties: {
             background: { type: "string" },
+            title: { type: "string", title: "Human title" },
             items: {
               default: [],
               type: "array",
@@ -45,6 +46,7 @@ describe("Codex schema compatibility", () => {
           type: "object",
           properties: {
             background: { type: "string" },
+            title: { type: "string" },
             items: {
               type: "array",
               items: {
@@ -58,7 +60,7 @@ describe("Codex schema compatibility", () => {
               },
             },
           },
-          required: ["background", "items"],
+          required: ["background", "items", "title"],
           additionalProperties: false,
         },
       },
