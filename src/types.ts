@@ -46,6 +46,7 @@ export interface GenerateObjectRequest<T> {
   schemaName?: string;
   schemaDescription?: string;
   timeoutMs?: number;
+  maxOutputTokens?: number;
   signal?: AbortSignal;
   retry?: RetryOptions;
 }

@@ -1,4 +1,8 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { AIRuntimeError, generateObject } from "../src/index.js";
@@ -40,7 +44,10 @@ describe("openai-compatible generation", () => {
     expect(receivedBody).toMatchObject({
       model: "mock-model",
       response_format: { type: "json_object" },
+      max_tokens: 32768,
     });
+    expect(JSON.stringify(receivedBody?.messages)).toContain("json");
+    expect(JSON.stringify(receivedBody?.messages)).toContain("title");
     expect(result).toMatchObject({
       value: { title: "ready" },
       provider: "openai-compatible",
@@ -95,9 +102,15 @@ describe("openai-compatible generation", () => {
           "content-type": "application/json",
           "retry-after-ms": "1",
         });
-        response.end(JSON.stringify({
-          error: { message: "server overloaded", type: "server_error", code: "overloaded" },
-        }));
+        response.end(
+          JSON.stringify({
+            error: {
+              message: "server overloaded",
+              type: "server_error",
+              code: "overloaded",
+            },
+          }),
+        );
         return;
       }
       sendCompletion(response, { title: "recovered" });
@@ -165,7 +178,11 @@ describe("openai-compatible generation", () => {
     }).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(AIRuntimeError);
-    expect(error).toMatchObject({ code: "TIMEOUT", retryable: true, attempts: 1 });
+    expect(error).toMatchObject({
+      code: "TIMEOUT",
+      retryable: true,
+      attempts: 1,
+    });
   });
 
   it("does not retry an external abort", async () => {
@@ -175,7 +192,7 @@ describe("openai-compatible generation", () => {
       await new Promise(() => undefined);
     });
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 20);
+    setTimeout(() => controller.abort(), 80);
 
     const error = await generateObject({
       provider: {
@@ -190,8 +207,86 @@ describe("openai-compatible generation", () => {
       retry: { maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 2 },
     }).catch((caught: unknown) => caught);
 
-    expect(error).toMatchObject({ code: "ABORTED", retryable: false, attempts: 1 });
+    expect(error).toMatchObject({
+      code: "ABORTED",
+      retryable: false,
+      attempts: 1,
+    });
     expect(requests).toBe(1);
+  });
+
+  it("accepts json that Zod can coerce after applying defaults", async () => {
+    const server = await startMockServer(async (_request, response) => {
+      sendCompletion(response, { title: "ready" });
+    });
+
+    const result = await generateObject({
+      provider: {
+        kind: "openai-compatible",
+        baseURL: `${server.baseURL}/v1`,
+        model: "mock-model",
+      },
+      schema: z.object({
+        title: z.string(),
+        tags: z.array(z.string()).default([]),
+      }),
+      prompt: "Return a title.",
+      retry: { maxAttempts: 1 },
+    });
+
+    expect(result.value).toEqual({ title: "ready", tags: [] });
+  });
+
+  it("accepts a schema-named wrapper object from JSON-mode providers", async () => {
+    const server = await startMockServer(async (_request, response) => {
+      sendCompletion(response, {
+        title_response: {
+          title: "wrapped",
+        },
+      });
+    });
+
+    const result = await generateObject({
+      provider: {
+        kind: "openai-compatible",
+        baseURL: `${server.baseURL}/v1`,
+        model: "mock-model",
+      },
+      schema: z.object({ title: z.string() }),
+      schemaName: "title_response",
+      prompt: "Return a title.",
+      retry: { maxAttempts: 1 },
+    });
+
+    expect(result.value).toEqual({ title: "wrapped" });
+  });
+
+  it("uses a configured larger output budget", async () => {
+    let receivedBody: Record<string, unknown> | undefined;
+    const previous = process.env.FOUNDRY_AI_MAX_OUTPUT_TOKENS;
+    process.env.FOUNDRY_AI_MAX_OUTPUT_TOKENS = "49152";
+    try {
+      const server = await startMockServer(async (request, response) => {
+        receivedBody = await readJSONBody(request);
+        sendCompletion(response, { title: "ready" });
+      });
+
+      await generateObject({
+        provider: {
+          kind: "openai-compatible",
+          baseURL: `${server.baseURL}/v1`,
+          model: "mock-model",
+        },
+        schema: z.object({ title: z.string() }),
+        prompt: "Return a title.",
+        retry: { maxAttempts: 1 },
+      });
+
+      expect(receivedBody?.max_tokens).toBe(49152);
+    } finally {
+      if (previous === undefined) delete process.env.FOUNDRY_AI_MAX_OUTPUT_TOKENS;
+      else process.env.FOUNDRY_AI_MAX_OUTPUT_TOKENS = previous;
+    }
   });
 
   it("retries malformed model output and returns INVALID_OUTPUT", async () => {
@@ -213,14 +308,23 @@ describe("openai-compatible generation", () => {
     }).catch((caught: unknown) => caught);
 
     expect(requests).toBe(2);
-    expect(error).toMatchObject({ code: "INVALID_OUTPUT", retryable: true, attempts: 2 });
+    expect(error).toMatchObject({
+      code: "INVALID_OUTPUT",
+      retryable: true,
+      attempts: 2,
+    });
     expect(error).toBeInstanceOf(Error);
-    expect(error instanceof Error ? error.message : "").not.toContain("not-json");
+    expect(error instanceof Error ? error.message : "").not.toContain(
+      "not-json",
+    );
   });
 });
 
 async function startMockServer(
-  handler: (request: IncomingMessage, response: ServerResponse) => Promise<void> | void,
+  handler: (
+    request: IncomingMessage,
+    response: ServerResponse,
+  ) => Promise<void> | void,
 ): Promise<MockServer> {
   const server = createServer((request, response) => {
     void Promise.resolve(handler(request, response)).catch((error: unknown) => {
@@ -230,22 +334,31 @@ async function startMockServer(
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
-  if (address === null || typeof address === "string") throw new Error("Mock server did not bind to TCP.");
+  if (address === null || typeof address === "string")
+    throw new Error("Mock server did not bind to TCP.");
   const mock: MockServer = {
     baseURL: `http://127.0.0.1:${address.port}`,
     close: async () => {
       server.closeAllConnections();
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
     },
   };
   servers.push(mock);
   return mock;
 }
 
-async function readJSONBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+async function readJSONBody(
+  request: IncomingMessage,
+): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
-  for await (const chunk of request) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+  for await (const chunk of request)
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<
+    string,
+    unknown
+  >;
 }
 
 function sendCompletion(response: ServerResponse, value: unknown): void {
@@ -254,22 +367,26 @@ function sendCompletion(response: ServerResponse, value: unknown): void {
 
 function sendRawCompletion(response: ServerResponse, content: string): void {
   response.writeHead(200, { "content-type": "application/json" });
-  response.end(JSON.stringify({
-    id: "chatcmpl-test",
-    object: "chat.completion",
-    created: 1_700_000_000,
-    model: "mock-model",
-    choices: [{
-      index: 0,
-      message: { role: "assistant", content },
-      finish_reason: "stop",
-    }],
-    usage: {
-      prompt_tokens: 5,
-      completion_tokens: 3,
-      total_tokens: 8,
-      prompt_tokens_details: { cached_tokens: 1 },
-      completion_tokens_details: { reasoning_tokens: 2 },
-    },
-  }));
+  response.end(
+    JSON.stringify({
+      id: "chatcmpl-test",
+      object: "chat.completion",
+      created: 1_700_000_000,
+      model: "mock-model",
+      choices: [
+        {
+          index: 0,
+          message: { role: "assistant", content },
+          finish_reason: "stop",
+        },
+      ],
+      usage: {
+        prompt_tokens: 5,
+        completion_tokens: 3,
+        total_tokens: 8,
+        prompt_tokens_details: { cached_tokens: 1 },
+        completion_tokens_details: { reasoning_tokens: 2 },
+      },
+    }),
+  );
 }

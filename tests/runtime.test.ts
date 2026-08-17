@@ -25,7 +25,11 @@ describe("Codex schema compatibility", () => {
                 type: "object",
                 properties: {
                   statement: { type: "string", default: "x" },
-                  refs: { type: "array", items: { type: "string" }, default: [] },
+                  refs: {
+                    type: "array",
+                    items: { type: "string" },
+                    default: [],
+                  },
                 },
                 required: ["statement"],
                 additionalProperties: false,
@@ -131,21 +135,29 @@ describe("Codex schema compatibility", () => {
 
 describe("CLI structured generation guard", () => {
   it("adds a JSON instruction for OpenAI-compatible JSON mode", () => {
-    expect(systemPromptForProvider("openai-compatible", "Follow the schema.")).toBe(
-      `${HTTP_JSON_MODE_GUARD}\n\nFollow the schema.`,
-    );
-    expect(systemPromptForProvider({
-      kind: "openai-compatible",
-      baseURL: "https://api.example.test/v1",
-      model: "native-json-schema",
-      structuredOutputs: true,
-    }, "Follow the schema.")).toBe("Follow the schema.");
+    expect(
+      systemPromptForProvider("openai-compatible", "Follow the schema."),
+    ).toBe(`${HTTP_JSON_MODE_GUARD}\n\nFollow the schema.`);
+    expect(HTTP_JSON_MODE_GUARD.toLowerCase()).toContain("json");
+    expect(
+      systemPromptForProvider(
+        {
+          kind: "openai-compatible",
+          baseURL: "https://api.example.test/v1",
+          model: "native-json-schema",
+          structuredOutputs: true,
+        },
+        "Follow the schema.",
+      ),
+    ).toBe("Follow the schema.");
   });
 
   it("adds a domain-neutral guard for CLI-backed providers", () => {
     expect(systemPromptForProvider("codex-cli", "Follow the schema.")).toBe(
       `${CLI_STRUCTURED_GENERATION_GUARD}\n\nFollow the schema.`,
     );
-    expect(systemPromptForProvider("claude-cli", undefined)).toBe(CLI_STRUCTURED_GENERATION_GUARD);
+    expect(systemPromptForProvider("claude-cli", undefined)).toBe(
+      CLI_STRUCTURED_GENERATION_GUARD,
+    );
   });
 });

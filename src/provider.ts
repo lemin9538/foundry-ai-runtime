@@ -14,9 +14,14 @@ export const CLI_ADAPTER_PACKAGES = {
   "claude-cli": "ai-sdk-provider-claude-code",
 } as const;
 
-export function validateProviderConfig(config: AIProviderConfig): AIProviderConfig {
+export function validateProviderConfig(
+  config: AIProviderConfig,
+): AIProviderConfig {
   if (!isRecord(config)) {
-    throw invalidConfig("Provider configuration must be an object.", "openai-compatible");
+    throw invalidConfig(
+      "Provider configuration must be an object.",
+      "openai-compatible",
+    );
   }
 
   const kind = providerKindFrom(config);
@@ -31,8 +36,15 @@ export function validateProviderConfig(config: AIProviderConfig): AIProviderConf
     const model = requiredString(config.model, "model", kind);
     const baseURL = validateBaseURL(config.baseURL, kind);
     const apiKey = optionalString(config.apiKey, "apiKey", kind);
-    const providerName = optionalString(config.providerName, "providerName", kind);
-    if (config.structuredOutputs !== undefined && typeof config.structuredOutputs !== "boolean") {
+    const providerName = optionalString(
+      config.providerName,
+      "providerName",
+      kind,
+    );
+    if (
+      config.structuredOutputs !== undefined &&
+      typeof config.structuredOutputs !== "boolean"
+    ) {
       throw invalidConfig("structuredOutputs must be a boolean.", kind);
     }
 
@@ -41,7 +53,9 @@ export function validateProviderConfig(config: AIProviderConfig): AIProviderConf
       baseURL,
       model,
       ...(apiKey !== undefined ? { apiKey } : {}),
-      ...(config.headers !== undefined ? { headers: validateHeaders(config.headers, kind) } : {}),
+      ...(config.headers !== undefined
+        ? { headers: validateHeaders(config.headers, kind) }
+        : {}),
       ...(providerName !== undefined ? { providerName } : {}),
       ...(config.structuredOutputs !== undefined
         ? { structuredOutputs: config.structuredOutputs }
@@ -51,7 +65,10 @@ export function validateProviderConfig(config: AIProviderConfig): AIProviderConf
 
   const executable = optionalString(config.executable, "executable", kind);
   const model = optionalString(config.model, "model", kind);
-  const env = config.env === undefined ? undefined : validateEnvironment(config.env, kind);
+  const env =
+    config.env === undefined
+      ? undefined
+      : validateEnvironment(config.env, kind);
   return {
     kind,
     ...(model !== undefined ? { model } : {}),
@@ -69,13 +86,21 @@ export async function createProviderModel(
     case "openai-compatible":
       return createHTTPModel(validated);
     case "codex-cli":
-      return createCodexModel(validated, requiredWorkingDirectory(cliWorkingDirectory, validated.kind));
+      return createCodexModel(
+        validated,
+        requiredWorkingDirectory(cliWorkingDirectory, validated.kind),
+      );
     case "claude-cli":
-      return createClaudeModel(validated, requiredWorkingDirectory(cliWorkingDirectory, validated.kind));
+      return createClaudeModel(
+        validated,
+        requiredWorkingDirectory(cliWorkingDirectory, validated.kind),
+      );
   }
 }
 
-export async function assertCLIAdapterInstalled(kind: "codex-cli" | "claude-cli"): Promise<void> {
+export async function assertCLIAdapterInstalled(
+  kind: "codex-cli" | "claude-cli",
+): Promise<void> {
   if (kind === "codex-cli") {
     await loadCodexAdapter();
   } else {
@@ -83,7 +108,9 @@ export async function assertCLIAdapterInstalled(kind: "codex-cli" | "claude-cli"
   }
 }
 
-function createHTTPModel(config: OpenAICompatibleProviderConfig): LanguageModel {
+function createHTTPModel(
+  config: OpenAICompatibleProviderConfig,
+): LanguageModel {
   const supportsNativeSchema = config.structuredOutputs === true;
   const provider = createOpenAICompatible({
     name: config.providerName ?? "foundry-openai-compatible",
@@ -93,7 +120,9 @@ function createHTTPModel(config: OpenAICompatibleProviderConfig): LanguageModel 
     // Claim schema support so AI SDK does not warn; downgrade at the wire boundary
     // when the target only implements OpenAI JSON mode.
     supportsStructuredOutputs: true,
-    transformRequestBody: supportsNativeSchema ? undefined : downgradeSchemaToJSONMode,
+    transformRequestBody: supportsNativeSchema
+      ? undefined
+      : downgradeSchemaToJSONMode,
   });
   return provider.chatModel(config.model);
 }
@@ -103,7 +132,9 @@ async function createCodexModel(
   workingDirectory: string,
 ): Promise<LanguageModel> {
   const { codexExec, listModels } = await loadCodexAdapter();
-  const model = config.model ?? await resolveCodexDefaultModel(config, workingDirectory, listModels);
+  const model =
+    config.model ??
+    (await resolveCodexDefaultModel(config, workingDirectory, listModels));
   return codexExec(model, {
     codexPath: config.executable ?? "codex",
     cwd: workingDirectory,
@@ -117,7 +148,10 @@ async function createCodexModel(
       mcp_servers: {},
       web_search: "disabled",
     },
-    env: config.env === undefined ? undefined : ({ ...config.env } as Record<string, string>),
+    env:
+      config.env === undefined
+        ? undefined
+        : ({ ...config.env } as Record<string, string>),
   });
 }
 
@@ -142,46 +176,87 @@ async function createClaudeModel(
 async function resolveCodexDefaultModel(
   config: CodexCLIProviderConfig,
   workingDirectory: string,
-  listModels: typeof import("ai-sdk-provider-codex-cli")["listModels"],
+  listModels: (typeof import("ai-sdk-provider-codex-cli"))["listModels"],
 ): Promise<string> {
-  const environment = config.env === undefined
-    ? undefined
-    : Object.fromEntries(Object.entries(config.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
+  const environment =
+    config.env === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(config.env).filter(
+            (entry): entry is [string, string] => entry[1] !== undefined,
+          ),
+        );
   const result = await listModels({
     codexPath: config.executable ?? "codex",
     cwd: workingDirectory,
     ...(environment === undefined ? {} : { env: environment }),
   });
-  const defaultModel = result.defaultModel ?? result.models.find((model) => model.isDefault === true);
+  const defaultModel =
+    result.defaultModel ??
+    result.models.find((model) => model.isDefault === true);
   const model = defaultModel?.model?.trim() || defaultModel?.id.trim();
   if (model) return model;
-  throw invalidConfig("Codex CLI did not report a default model; configure model explicitly.", config.kind);
+  throw invalidConfig(
+    "Codex CLI did not report a default model; configure model explicitly.",
+    config.kind,
+  );
 }
 
-function downgradeSchemaToJSONMode(body: Record<string, unknown>): Record<string, unknown> {
+function downgradeSchemaToJSONMode(
+  body: Record<string, unknown>,
+): Record<string, unknown> {
   const responseFormat = body.response_format;
-  if (
-    isRecord(responseFormat) &&
-    responseFormat.type === "json_schema"
-  ) {
-    return { ...body, response_format: { type: "json_object" } };
+  if (!isRecord(responseFormat) || responseFormat.type !== "json_schema") {
+    return body;
   }
-  return body;
+  const envelope = isRecord(responseFormat.json_schema)
+    ? responseFormat.json_schema
+    : undefined;
+  const schema =
+    envelope === undefined ? undefined : (envelope.schema ?? envelope);
+  const messages = Array.isArray(body.messages) ? [...body.messages] : [];
+  if (schema !== undefined) {
+    const name =
+      typeof envelope?.name === "string" && envelope.name.trim().length > 0
+        ? envelope.name
+        : "response";
+    messages.push({
+      role: "system",
+      content: `Return only json matching this ${name} schema: ${JSON.stringify(schema)}`,
+    });
+  }
+  return {
+    ...body,
+    messages,
+    response_format: { type: "json_object" },
+  };
 }
 
-async function loadCodexAdapter(): Promise<typeof import("ai-sdk-provider-codex-cli")> {
+async function loadCodexAdapter(): Promise<
+  typeof import("ai-sdk-provider-codex-cli")
+> {
   try {
     return await import("ai-sdk-provider-codex-cli");
   } catch (error) {
-    throw adapterLoadError("codex-cli", CLI_ADAPTER_PACKAGES["codex-cli"], error);
+    throw adapterLoadError(
+      "codex-cli",
+      CLI_ADAPTER_PACKAGES["codex-cli"],
+      error,
+    );
   }
 }
 
-async function loadClaudeAdapter(): Promise<typeof import("ai-sdk-provider-claude-code")> {
+async function loadClaudeAdapter(): Promise<
+  typeof import("ai-sdk-provider-claude-code")
+> {
   try {
     return await import("ai-sdk-provider-claude-code");
   } catch (error) {
-    throw adapterLoadError("claude-cli", CLI_ADAPTER_PACKAGES["claude-cli"], error);
+    throw adapterLoadError(
+      "claude-cli",
+      CLI_ADAPTER_PACKAGES["claude-cli"],
+      error,
+    );
   }
 }
 
@@ -208,10 +283,16 @@ function isMissingModuleError(error: unknown, packageName: string): boolean {
   if (!isRecord(error)) return false;
   const code = error.code;
   const message = typeof error.message === "string" ? error.message : "";
-  return (code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND") && message.includes(packageName);
+  return (
+    (code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND") &&
+    message.includes(packageName)
+  );
 }
 
-function requiredWorkingDirectory(value: string | undefined, provider: AIProviderKind): string {
+function requiredWorkingDirectory(
+  value: string | undefined,
+  provider: AIProviderKind,
+): string {
   if (typeof value !== "string" || value.trim() === "") {
     throw invalidConfig("A CLI working directory is required.", provider);
   }
@@ -219,30 +300,52 @@ function requiredWorkingDirectory(value: string | undefined, provider: AIProvide
 }
 
 function validateBaseURL(value: unknown, provider: AIProviderKind): string {
-  const baseURL = requiredString(value, "baseURL", provider).replace(/\/+$/u, "");
+  const baseURL = requiredString(value, "baseURL", provider).replace(
+    /\/+$/u,
+    "",
+  );
   let parsed: URL;
   try {
     parsed = new URL(baseURL);
   } catch {
-    throw invalidConfig("baseURL must be an absolute HTTP or HTTPS URL.", provider);
+    throw invalidConfig(
+      "baseURL must be an absolute HTTP or HTTPS URL.",
+      provider,
+    );
   }
-  if (!(["http:", "https:"] as string[]).includes(parsed.protocol) || parsed.username || parsed.password) {
-    throw invalidConfig("baseURL must be an absolute HTTP or HTTPS URL without embedded credentials.", provider);
+  if (
+    !(["http:", "https:"] as string[]).includes(parsed.protocol) ||
+    parsed.username ||
+    parsed.password
+  ) {
+    throw invalidConfig(
+      "baseURL must be an absolute HTTP or HTTPS URL without embedded credentials.",
+      provider,
+    );
   }
   if (parsed.search || parsed.hash) {
-    throw invalidConfig("baseURL must not include a query string or fragment.", provider);
+    throw invalidConfig(
+      "baseURL must not include a query string or fragment.",
+      provider,
+    );
   }
   return baseURL;
 }
 
-function validateHeaders(value: unknown, provider: AIProviderKind): Readonly<Record<string, string>> {
+function validateHeaders(
+  value: unknown,
+  provider: AIProviderKind,
+): Readonly<Record<string, string>> {
   if (!isRecord(value) || Array.isArray(value)) {
     throw invalidConfig("headers must be a string-to-string record.", provider);
   }
   const headers: Record<string, string> = {};
   for (const [key, headerValue] of Object.entries(value)) {
     if (key.trim() === "" || typeof headerValue !== "string") {
-      throw invalidConfig("headers must contain non-empty names and string values.", provider);
+      throw invalidConfig(
+        "headers must contain non-empty names and string values.",
+        provider,
+      );
     }
     headers[key] = headerValue;
   }
@@ -258,27 +361,44 @@ function validateEnvironment(
   }
   const env: Record<string, string | undefined> = {};
   for (const [key, envValue] of Object.entries(value)) {
-    if (key.trim() === "" || (typeof envValue !== "string" && envValue !== undefined)) {
-      throw invalidConfig("env must contain non-empty names and string or undefined values.", provider);
+    if (
+      key.trim() === "" ||
+      (typeof envValue !== "string" && envValue !== undefined)
+    ) {
+      throw invalidConfig(
+        "env must contain non-empty names and string or undefined values.",
+        provider,
+      );
     }
     env[key] = envValue;
   }
   return env;
 }
 
-function requiredString(value: unknown, field: string, provider: AIProviderKind): string {
+function requiredString(
+  value: unknown,
+  field: string,
+  provider: AIProviderKind,
+): string {
   if (typeof value !== "string" || value.trim() === "") {
     throw invalidConfig(`${field} must be a non-empty string.`, provider);
   }
   return value.trim();
 }
 
-function optionalString(value: unknown, field: string, provider: AIProviderKind): string | undefined {
+function optionalString(
+  value: unknown,
+  field: string,
+  provider: AIProviderKind,
+): string | undefined {
   if (value === undefined) return undefined;
   return requiredString(value, field, provider);
 }
 
-function invalidConfig(message: string, provider: AIProviderKind): AIRuntimeError {
+function invalidConfig(
+  message: string,
+  provider: AIProviderKind,
+): AIRuntimeError {
   return new AIRuntimeError(message, {
     code: "INVALID_CONFIG",
     provider,
@@ -286,8 +406,12 @@ function invalidConfig(message: string, provider: AIProviderKind): AIRuntimeErro
   });
 }
 
-function providerKindFrom(value: Record<string, unknown>): AIProviderKind | undefined {
-  return value.kind === "openai-compatible" || value.kind === "codex-cli" || value.kind === "claude-cli"
+function providerKindFrom(
+  value: Record<string, unknown>,
+): AIProviderKind | undefined {
+  return value.kind === "openai-compatible" ||
+    value.kind === "codex-cli" ||
+    value.kind === "claude-cli"
     ? value.kind
     : undefined;
 }
